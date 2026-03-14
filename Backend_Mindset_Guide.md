@@ -1122,9 +1122,10 @@ Server stores only the file URL in the database, not the file itself.
 
 | Channel | Best For | Link |
 |---|---|---|
+| Sheryians Coding School | Frontend/Backend/Animation | https://www.youtube.com/@sheryians |
 | Traversy Media | Node/Express beginner | https://www.youtube.com/@TraversyMedia |
 | Akshay Saini | JS and backend concepts | https://www.youtube.com/@akshaymarch7 |
-| Hitesh Choudhary | Node.js full series | https://www.youtube.com/@HiteshChoudharydotcom |
+| Hitesh Choudhary | js/react/backend full series | https://www.youtube.com/@HiteshChoudharydotcom |
 | Net Ninja | Node + Express series | https://www.youtube.com/@NetNinja |
 | Jack Herrington | Advanced Node patterns | https://www.youtube.com/@jherr |
 
@@ -1133,7 +1134,7 @@ Server stores only the file URL in the database, not the file itself.
 | Tool | Purpose | Link |
 |---|---|---|
 | Postman | API testing | https://www.postman.com |
-| Thunder Client | Postman alternative inside VSCode | VS Code Extension |
+| Thunder Client | Postman alternative inside VSCode | VS Code Extension - (optional) |
 | MongoDB Compass | Visual GUI for MongoDB | https://www.mongodb.com/products/compass |
 | Railway | Deploy Node apps free | https://railway.app |
 | Render | Deploy Node apps free | https://render.com |
