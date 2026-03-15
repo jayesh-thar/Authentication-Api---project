@@ -1,0 +1,51 @@
+https://github.com/ankurdotio/backend-ledger
+
+'$ - folder'
+
+
+$Backend: 
+    npm init -y
+    npm i express
+
+mongo-atlas:
+    open project(left-top side): new project -> name it -> new cluster -> free version | region select | create -> new data-user create | copy connection string
+
+open mongo DB Compass: 
+    new connection: paste string (check username & password)
+
+.env: 
+    npm i dotenv
+    starting file: server.js
+        'require('dotenv').config' write top of the file
+
+
+config/db.js
+    "
+        const mongoose = require("mongoose");
+        async function connectDB() {
+        await mongoose.connect(process.env.MONGO_URL)
+            .then(() => {
+                console.log('DB Connected');
+            })
+            .catch(err => {
+                console.log('DB connection error', err);
+                process.exit(1); // close/stop server here
+            })
+        }
+        module.exports = connectDB
+    "
+
+server.js
+    "
+        require('dotenv').config()
+        const app = require('./src/app');
+        const connectDB = require('./src/config/db')
+        connectDB()
+        app.listen(3000, () => {
+            console.log('Server is running on port: 3000');    
+        })
+    "
+
+
+$model
+    user.model.js - create schema
