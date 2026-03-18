@@ -107,3 +107,48 @@ day04:
     - return before res.json() — preventing double response error
     - Named exports — export { register, login }
 
+day05:
+
+#Login flow:
+
+        Login success
+            ↓
+        Server creates JWT token with userId inside
+            ↓
+        Server puts token in httpOnly cookie
+            ↓
+        Browser stores cookie automatically
+            ↓
+        Next request → browser sends cookie automatically
+            ↓
+        Server reads cookie → verifies token → knows who you are
+            ↓
+        Logout → server clears cookie → token gone
+
+npm i 
+    jsonwebtoken - to create JWT token
+    cookie-parser - middleware that read cookie | node can't read we need middleware that read cookie
+
+
+# What We Built:
+
+    generateToken.js ✅
+        jwt.sign() → creates token with userId + expiry
+        res.cookie() → stores token in httpOnly cookie
+        return token → for flexibility (mobile apps)
+    
+    Updated auth.controller.js ✅
+        register → generateToken(user._id, res) after create
+        login    → generateToken(userExisted._id, res) after verify
+        logout   → res.cookie('token', '', { maxAge: 0 }) clears cookie
+    
+    Updated auth.routes.js ✅
+        POST /api/auth/register → register
+        POST /api/auth/login    → login
+        POST /api/auth/logout   → logout
+
+# Also learn:
+    Cookie Lifecycle
+        LOGIN  → browser stores cookie (7 days)
+        REQUEST → browser auto sends cookie
+        LOGOUT → browser removes cookie (maxAge: 0)
