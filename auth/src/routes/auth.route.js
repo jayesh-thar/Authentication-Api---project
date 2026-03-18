@@ -1,5 +1,5 @@
 import express from "express";
-import { register, login } from '../controllers/auth.controller.js'
+import { register, login, logout } from '../controllers/auth.controller.js'
 
 const router = express.Router();
 
@@ -21,6 +21,8 @@ router.post("/register", register);
 // userRegister() runs immediately when server starts — before any request even comes in. That's wrong. Route needs a reference to the function — not the result of calling it. You're saying — "when someone hits /register, THEN run this function" Not — "run this function right now while setting up routes"
 
 router.post("/login", login)
+
+router.post('/logout', logout);
 
 
 

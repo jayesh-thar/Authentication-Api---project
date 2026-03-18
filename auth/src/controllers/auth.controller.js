@@ -1,5 +1,6 @@
 import User from "../models/user.model.js";
 import bcryptjs from "bcryptjs";
+import generateToken from "../utils/generateToken.js";
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -45,6 +46,8 @@ const register = async (req, res) => {
       password: hashedPassword,
     }); // more cleaner
 
+    generateToken(user._id, res);
+
     const userResponse = await User.findById(user._id).select("-password");
 
     res.status(201).json({
@@ -77,17 +80,21 @@ const login = async (req, res) => {
     }
 
     const userExisted = await User.findOne({ email });
+
     if (!userExisted) {
       return res.status(400).json({
         success: false,
         message: "User not exists, register and login again.",
       });
     }
+
     const correctPassword = await bcryptjs.compare(
       password,
       userExisted.password,
     );
+
     if (correctPassword) {
+      generateToken(userExisted._id, res);
       return res.status(200).json({
         success: true,
         message: `${userExisted.username} login successfully.`,
@@ -107,4 +114,23 @@ const login = async (req, res) => {
   }
 };
 
-export { register, login };
+// @desc    Logout user
+// @route   POST /api/auth/logout
+// @access  Public
+const logout = (req, res) => {
+  try {
+    res.cookie("token", "", { maxAge: 0 });
+    return res.status(200).json({
+      success: true,
+      message: "User logout successfully.",
+    });
+  } catch (error) {
+    return res.status(5000).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+export { register, login, logout };
