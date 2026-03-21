@@ -355,7 +355,7 @@ Controller            → run business logic
 Response sent
 ```
 
----
+<!-- ---
 
 ## ⏳ Coming Soon
 
@@ -370,7 +370,7 @@ Response sent
 - [ ] Docker setup
 - [ ] Email templates with MJML
 - [ ] Two-Factor Authentication (2FA)
-- [ ] Account deletion flow
+- [ ] Account deletion flow -->
 
 ---
 
