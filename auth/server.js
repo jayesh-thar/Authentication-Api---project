@@ -1,5 +1,4 @@
-import dotenv from 'dotenv'
-dotenv.config(); 
+import 'dotenv/config'
 // first thing before any other import // app.js might need process.env values when it loads. If dotenv.config() runs after — those values are undefined at that point.
 import app from './src/app.js' 
 import connectionDB from './src/config/db.js'
