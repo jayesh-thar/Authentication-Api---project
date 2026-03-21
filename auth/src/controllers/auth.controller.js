@@ -2,6 +2,7 @@ import User from "../models/user.model.js";
 import bcryptjs from "bcryptjs";
 import generateToken from "../utils/generateToken.js";
 import sendEmail from "../utils/sendEmail.js";
+import crypto from "crypto";
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -181,4 +182,136 @@ const logout = (req, res) => {
   }
 };
 
-export { register, login, logout };
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: `User with emailId: ${email} NOT FOUND.`,
+      });
+    }
+    user.lastLogin = Date.now()
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    user.resetPasswordToken = resetToken;
+    user.resetPasswordExpiresAt = Date.now() + 1 * 60 * 60 * 1000; // '1hr' from next sec
+    await user.save();
+    sendEmail({
+      to: user.email,
+      subject: "Reset Password request",
+      html: `
+        <h2>Reset Your Password</h2>
+        <p>Click the link below to reset your password:</p>
+        <a href="http://localhost:5000/api/auth/reset-password/${resetToken}">
+            Reset Password
+        </a>
+        <p>This link expires in <strong>1 hour</strong>.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+      `,
+    });
+    return res.status(200).json({
+      success: true,
+      message: `Successfully sent Reset password to ${user.username}`,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Server Error.",
+      error: error.message,
+    });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    // const { token } = req.params; // also correct
+    const token = req.params.token;
+
+    const { newPassword } = req.body;
+    if (!newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter new password",
+      });
+    }
+
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpiresAt: { $gt: Date.now() },
+    });
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "token invalid or expired",
+      });
+    }
+    const newResetPassword = await bcryptjs.hash(newPassword, 10);
+    user.password = newResetPassword;
+    user.resetPasswordToken = undefined; // ✅ clear token
+    user.resetPasswordExpiresAt = undefined; // ✅ clear expiry
+    await user.save();
+    sendEmail({
+      to: user.email,
+      subject: "Password Reset Successful",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+    
+    <div style="background-color: #16a34a; padding: 40px; border-radius: 10px 10px 0 0; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 28px;">Password Reset Successful ✅</h1>
+        <p style="color: #bbf7d0; margin-top: 10px;">Your password has been updated</p>
+    </div>
+
+    <div style="background-color: white; padding: 40px; border-radius: 0 0 10px 10px;">
+        <h2 style="color: #333;">Hey ${user.username}, 👋</h2>
+        <p style="color: #666; line-height: 1.8;">
+            Your password has been successfully reset. 
+            You can now login with your new password.
+        </p>
+
+        <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <p style="margin: 0; color: #555;">🕐 Reset Time: ${new Date().toLocaleString()}</p>
+        </div>
+
+        <div style="background-color: #fff7ed; border-left: 4px solid #ea580c; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <p style="margin: 0; color: #9a3412;">
+                ⚠️ If you didn't reset your password, please contact support immediately.
+                Your account may be compromised.
+            </p>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="http://localhost:3000/login" 
+               style="background-color: #16a34a; color: white; padding: 14px 40px; 
+                      border-radius: 6px; text-decoration: none; font-size: 16px;
+                      font-weight: bold;">
+                Login Now →
+            </a>
+        </div>
+
+        <p style="color: #999; font-size: 13px; line-height: 1.6; text-align: center;">
+            If you have any questions, contact our support team.
+        </p>
+    </div>
+
+    <p style="text-align: center; color: #aaa; font-size: 12px; margin-top: 20px;">
+        © 2024 MyApp. All rights reserved.
+    </p>
+
+</div>
+      `,
+    });
+    return res.status(200).json({
+      success: true,
+      message: "Successfully reset password",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Server Error.",
+      error: error.message,
+    });
+  }
+};
+
+export { register, login, logout, forgotPassword, resetPassword };
