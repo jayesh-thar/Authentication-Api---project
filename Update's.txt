@@ -890,12 +890,199 @@ Other Improvements Added
      → Sent after successful password reset
      → Green design with security warning
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                  DAY 08 — ACCESS TOKEN + REFRESH TOKEN UPGRADE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 
+WHY UPGRADE FROM SINGLE TOKEN?
+ 
+  Problem: Single token (7 days) → stolen = 7 days of full attacker access
+  Solution: Two tokens with different lifespans + DB storage
+ 
+  ┌──────────────┬─────────────────┬──────────────────────────────┐
+  │              │ Access Token    │ Refresh Token                │
+  ├──────────────┼─────────────────┼──────────────────────────────┤
+  │ Expiry       │ 15 minutes      │ 7 days                       │
+  │ Stored in    │ httpOnly cookie │ httpOnly cookie + DB         │
+  │ Used for     │ Every request   │ Getting new access token     │
+  │ If stolen    │ Useless in 15m  │ Delete from DB → blocked     │
+  │ In DB        │ No (stateless)  │ Yes (can be invalidated)     │
+  └──────────────┴─────────────────┴──────────────────────────────┘
+ 
+─────────────────────────────────────
+COOKIE EXPIRY vs JWT EXPIRY (Important Concept)
+─────────────────────────────────────
+ 
+  Two completely independent systems:
+ 
+  Cookie maxAge → browser deletes cookie at that time
+    res.cookie('token', '', { maxAge: 0 }) → browser removes immediately
+ 
+  JWT expiresIn → exp timestamp baked inside token string
+    Token is NEVER deleted — just becomes invalid after expiry
+    jwt.verify() reads exp → rejects if expired
+    Token string can still be in cookie but server rejects it
+ 
+  ┌─────────────────┬────────────────────┬────────────────────┐
+  │                 │ Cookie (maxAge)     │ JWT (expiresIn)    │
+  ├─────────────────┼────────────────────┼────────────────────┤
+  │ Controls        │ Browser deletion   │ Server rejection   │
+  │ Enforced by     │ Browser            │ jwt.verify()       │
+  │ After expiry    │ Cookie gone        │ Token rejected     │
+  │ How to remove   │ maxAge: 0          │ Can't delete       │
+  └─────────────────┴────────────────────┴────────────────────┘
+ 
+─────────────────────────────────────
+FILES UPDATED
+─────────────────────────────────────
+ 
+  .env additions:
+    ACCESS_TOKEN_SECRET=...   (different from refresh secret)
+    REFRESH_TOKEN_SECRET=...  (two secrets = two security layers)
+    ACCESS_TOKEN_EXPIRY=15m
+    REFRESH_TOKEN_EXPIRY=7d
+ 
+  user.model.js:
+    refreshToken: { type: String }
+    → No required — doesn't exist at User.create() time
+    → Only set after login/register completes
+ 
+  generateToken.js (upgraded):
+    → Now async (needs await user.save())
+    → Creates TWO tokens
+    → Saves refreshToken to DB
+    → Sets TWO cookies: 'accessToken' (15m) + 'refreshToken' (7d)
+    → Returns { accessToken, refreshToken }
+    → Controller must: await generateToken(user._id, res)
+ 
+  auth.middleware.js (upgraded):
+    → Now async (DB call in refresh flow)
+    → Imports User model
+    → Nested try/catch: outer = access token, inner = refresh token
+    → Access token = main key, refresh token = spare key
+ 
+  logout controller (upgraded):
+    → Now async
+    → Gets refreshToken from cookie
+    → Finds user by refreshToken in DB
+    → Clears refreshToken from DB (user.refreshToken = undefined)
+    → Clears BOTH cookies
+ 
+─────────────────────────────────────
+COMPLETE FLOW IN CODE TERMS
+─────────────────────────────────────
+ 
+  REGISTER / LOGIN:
+    await generateToken(user._id, res)
+            ↓
+    accessToken  = jwt.sign({ userID }, ACCESS_SECRET,  { expiresIn: '15m' })
+    refreshToken = jwt.sign({ userID }, REFRESH_SECRET, { expiresIn: '7d'  })
+            ↓
+    user.refreshToken = refreshToken
+    await user.save()                     ← saved to DB
+            ↓
+    res.cookie('accessToken',  accessToken,  { maxAge: 15 * 60 * 1000 })
+    res.cookie('refreshToken', refreshToken, { maxAge: 7 * 24 * 60 * 60 * 1000 })
+            ↓
+    Browser stores both cookies automatically
+ 
+  PROTECTED REQUEST:
+    verifyToken middleware
+            ↓
+    TRY:
+      accessToken = req.cookies.accessToken
+      no accessToken? → 401
+      decoded = jwt.verify(accessToken, ACCESS_SECRET)
+      VALID → req.userId = decoded.userID → next() ✅
+      INVALID/EXPIRED → catch runs
+            ↓
+    CATCH (outer — access token failed):
+      TRY:
+        refreshToken = req.cookies.refreshToken
+        no refreshToken? → 401 "Please login again"
+        jwt.verify(refreshToken, REFRESH_SECRET)
+        user = await User.findOne({ refreshToken })
+        no user? → 401 "Invalid session"
+        newAccessToken = jwt.sign({ userID: user._id }, ACCESS_SECRET, ...)
+        res.cookie('accessToken', newAccessToken, { maxAge: 15min })
+        req.userId = user._id → next() ✅
+      CATCH (inner — refresh flow failed):
+        → 401 "Session expired"
+ 
+  LOGOUT:
+    refreshToken = req.cookies.refreshToken
+    no refreshToken? → 401
+    user = await User.findOne({ refreshToken })
+    no user? → 401
+    user.refreshToken = undefined
+    await user.save()
+    res.cookie('accessToken', '', { maxAge: 0 })
+    res.cookie('refreshToken', '', { maxAge: 0 })
+    return 200 success
+ 
+─────────────────────────────────────
+TOKEN STOLEN SCENARIOS
+─────────────────────────────────────
+ 
+  Access token stolen:
+    → 15 minutes max → automatically useless ✅
+    → No refreshToken → can't get new one ✅
+ 
+  Refresh token stolen:
+    → Attacker gets new accessToken temporarily
+    → Real user logs out → DB refreshToken cleared
+    → Attacker's next refresh: not found in DB → blocked ✅
+ 
+  Both stolen:
+    → Real user logs out → DB cleared → attacker blocked ✅
+ 
+─────────────────────────────────────
+KEY CONCEPTS LEARNED IN THIS UPDATE
+─────────────────────────────────────
+ 
+  user vs User:
+    User → Model → query with it: User.findOne(), User.findById()
+    user → document → save on it: user.save(), user.refreshToken = x
+    User.save() ❌ | user.save() ✅
+ 
+  userId vs userID:
+    Must EXACTLY match jwt.sign() payload key
+    jwt.sign({ userID }) → decoded.userID ✅ | decoded.userId ❌
+ 
+  async/await rule:
+    async → where function is DEFINED (has await inside)
+    await → where function is CALLED
+    Both always needed together
+ 
+  findById vs findOne:
+    User.findById(id)              → finds by _id only
+    User.findOne({ refreshToken }) → finds by any field ✅
+ 
+  jwt.verify() behavior:
+    → Returns decoded payload if valid
+    → THROWS error if invalid/expired (not returns false)
+    → No need for if(!decoded) check — catch handles it
+ 
+─────────────────────────────────────
+BUGS FIXED IN THIS UPDATE
+─────────────────────────────────────
+ 
+  26. generateToken not awaited in login → refreshToken not saved to DB
+  27. logout clearing 'token' cookie → updated to 'accessToken' + 'refreshToken'
+  28. User.findById({ refreshToken }) → User.findOne({ refreshToken })
+  29. Missing user found check after findOne in middleware catch
+  30. process.env.ACCESS_EXPIRY → process.env.ACCESS_TOKEN_EXPIRY
+  31. jwt.sign(decoded.userID) → jwt.sign({ userID: user._id })
+  32. User.accessToken = accessToken → user.accessToken (document not Model)
+  33. Unused decoded variable in catch → removed
+  34. logout not async → has await inside → needs async
+  35. user.save() not awaited in logout → data might not save before response
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                          FINAL PROJECT — COMPLETE OVERVIEW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Final File Structure:
+Main Final File Structure:
   auth/
   ├── src/
   │   ├── config/
@@ -932,11 +1119,14 @@ Features Completed:
   ✅ Email format validation (regex)
   ✅ Password length validation (min 6)
   ✅ User Login with bcryptjs.compare()
-  ✅ JWT token generation
-  ✅ httpOnly cookie management
-  ✅ User Logout (cookie clear)
-  ✅ JWT verification middleware
-  ✅ Protected route example
+  ✅ Access Token (15min) + Refresh Token (7days)
+  ✅ Two separate JWT secrets
+  ✅ httpOnly cookie management (two cookies)
+  ✅ Refresh token saved to DB
+  ✅ Silent access token refresh via refresh token
+  ✅ User Logout (clear both cookies + clear DB)
+  ✅ JWT verification middleware (access + refresh flow)
+  ✅ Protected routes
   ✅ Forgot password with reset token
   ✅ Password reset with token verification
   ✅ Token expiry check ($gt operator)
@@ -951,13 +1141,17 @@ Features Completed:
   ✅ Password excluded from all responses
 
 Coming Soon / Future Improvements:
-  ⏳ Refresh token system
   ⏳ Helmet.js security headers
   ⏳ Redis for persistent rate limiting
+  ⏳ Refresh token rotation * 
   ⏳ Input sanitization (NoSQL injection)
   ⏳ Winston logging
   ⏳ Two-Factor Authentication (2FA)
 
+ 
+All Bugs Fixed (35 total):
+  #1-25  → Original project bugs
+  #26-35 → Access + Refresh token upgrade bugs
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                            ALL CONCEPTS LEARNED
@@ -1068,29 +1262,34 @@ HTTP:
   23. windowMs: Date.now() * 60 * 15 → should be 15 * 60 * 1000
   24. import { decode } from 'jsonwebtoken' → unnecessary, removed
   25. sendMail vs sendEmail → function name mismatch
+  26-35 → Access + Refresh token upgrade bugs
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                          PRODUCTION HABITS DEVELOPED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  ✅ Always validate input before touching DB
-  ✅ Always return after sending error response
-  ✅ Never expose password in any response
-  ✅ Always use try/catch on async functions
-  ✅ Use proper HTTP status codes
-  ✅ Keep secrets in .env, never hardcode
-  ✅ Always add .gitignore with .env and node_modules
-  ✅ Use header comments on every controller function
-  ✅ Use step comments inside functions as plan
-  ✅ Remove debug console.logs before production
-  ✅ Validate input at schema level (once) not controller level (everywhere)
-  ✅ Use object params for functions with 3+ parameters
-  ✅ One responsibility per file (routes/controllers/models separated)
-  ✅ Test edge cases — empty body, wrong email, expired token etc.
-  ✅ Clear sensitive tokens after single use (reset token)
-  ✅ Rate limit sensitive endpoints
-  ✅ Use 201 for creation, 200 for success, never mix
+  ✅ Validate input before touching DB
+  ✅ Return after sending error response
+  ✅ Never expose password in response
+  ✅ try/catch on all async functions
+  ✅ Proper HTTP status codes
+  ✅ Secrets in .env — never hardcode
+  ✅ .gitignore with .env + node_modules
+  ✅ Header comments on every controller
+  ✅ Step comments inside functions
+  ✅ Remove debug console.logs in production
+  ✅ Validate at schema level — not everywhere manually
+  ✅ Object params for 3+ parameter functions
+  ✅ One responsibility per file
+  ✅ Test all edge cases in Postman
+  ✅ Clear sensitive tokens after single use
+  ✅ Rate limit auth endpoints
+  ✅ Two separate secrets for access and refresh tokens
+  ✅ Store refresh token in DB — enables proper logout
+  ✅ Always await async functions
+  ✅ findOne() not findById() when searching by non-ID fields
+  ✅ 201 for creation | 200 for success — never mix
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
