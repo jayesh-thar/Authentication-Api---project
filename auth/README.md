@@ -20,7 +20,10 @@ Started with `console.log('hello')` → Ended with a full auth system. 💪
 | User Registration | ✅ Done |
 | User Login | ✅ Done |
 | User Logout | ✅ Done |
-| JWT Token Authentication | ✅ Done |
+| Access Token (15 min) | ✅ Done |
+| Refresh Token (7 days) | ✅ Done |
+| Silent Token Refresh | ✅ Done |
+| Refresh Token stored in DB | ✅ Done |
 | httpOnly Cookie Management | ✅ Done |
 | Password Hashing (bcrypt) | ✅ Done |
 | Forgot Password Flow | ✅ Done |
@@ -46,7 +49,7 @@ auth/
 │   │   └── auth.controller.js    ← register, login, logout,
 │   │                                forgotPassword, resetPassword
 │   ├── middleware/
-│   │   └── auth.middleware.js    ← JWT token verification
+│   │   └── auth.middleware.js    ← Access + Refresh token verification
 │   │
 │   ├── models/
 │   │   └── user.model.js         ← Mongoose user schema
@@ -55,7 +58,7 @@ auth/
 │   │   └── auth.route.js         ← All auth endpoints
 │   │
 │   └── utils/
-│       ├── generateToken.js      ← JWT creation + cookie setup
+│       ├── generateToken.js      ← Creates access + refresh tokens
 │       └── sendEmail.js          ← Reusable email sender
 │
 ├── .env                          ← Secrets (never commit!)
@@ -89,14 +92,18 @@ Create a `.env` file in root:
 ```env
 # Server
 PORT=5000
-
+ 
 # MongoDB Atlas
 MONGO_URI=mongodb+srv://user:password@cluster.mongodb.net/dbname
-
-# JWT
-JWT_SECRET=your_256bit_random_secret_key
-JWT_EXPIRES_IN=7d
-
+ 
+# Access Token (short lived)
+ACCESS_TOKEN_SECRET=your_256bit_access_secret
+ACCESS_TOKEN_EXPIRY=15m
+ 
+# Refresh Token (long lived)
+REFRESH_TOKEN_SECRET=your_different_256bit_refresh_secret
+REFRESH_TOKEN_EXPIRY=7d
+ 
 # Mailtrap Sandbox
 MAILTRAP_HOST=sandbox.smtp.mailtrap.io
 MAILTRAP_PORT=2525
@@ -105,7 +112,9 @@ MAILTRAP_PASSWORD=your_mailtrap_password
 MAIL_FROM=noreply@authflow.dev
 ```
 
-> ⚠️ Never commit `.env` to Git. Always add to `.gitignore`.
+> ⚠️ Two separate secrets for access and refresh tokens.
+> Never use the same secret for both — breaking one would break both.
+> Never commit `.env` to Git.
 
 ---
 
@@ -160,7 +169,9 @@ Request: { username, email, password }
 ✅ Check duplicate email in DB
 ✅ Hash password → bcryptjs.hash(password, 10)
 ✅ Save user to MongoDB
-✅ Generate JWT → store in httpOnly cookie (7 days)
+✅ Generate access token (15m) + refresh token (7d)
+✅ Save refresh token to DB
+✅ Store both in httpOnly cookies
 ✅ Send welcome email via Mailtrap
 ✅ Return 201 → user data (password excluded)
 ```
@@ -174,18 +185,22 @@ Request: { email, password }
 ✅ Find user by email in DB
 ✅ bcryptjs.compare(plainPassword, hashedPassword)
 ✅ Update lastLogin timestamp
-✅ Generate JWT → store in httpOnly cookie
+✅ Generate access token (15m) + refresh token (7d)
+✅ Save refresh token to DB
+✅ Store both in httpOnly cookies
 ✅ Return 200 → success message
 ```
 
 ### 🚪 Logout `POST /logout`
 
 ```
-Request: (no body needed)
+Request: (cookies sent automatically)
         ↓
-✅ Clear token cookie (maxAge: 0)
+✅ Get refresh token from cookie
+✅ Find user by refresh token in DB
+✅ Clear refresh token from DB
+✅ Clear both cookies (accessToken + refreshToken)
 ✅ Return 200 → success message
-✅ No DB call required
 ```
 
 ### 📧 Forgot Password `POST /forgot-password`
@@ -216,14 +231,21 @@ Request: { newPassword } + token in URL
 ### 🛡️ Protected Route `GET /profile`
 
 ```
-Request: (cookie sent automatically by browser)
+Request hits protected route
         ↓
-✅ verifyToken middleware runs first
-✅ Read token from req.cookies.token
-✅ jwt.verify(token, JWT_SECRET)
-✅ Attach decoded.userID → req.userId
-✅ Call next() → controller runs
-❌ 401 if token missing, invalid, or expired
+TRY — Check access token:
+  ✅ Read from req.cookies.accessToken
+  ✅ jwt.verify(accessToken, ACCESS_SECRET)
+  ✅ Valid → req.userId = decoded.userID → next()
+  ❌ Expired/Invalid → try refresh token
+        ↓
+CATCH — Refresh token flow:
+  ✅ Read from req.cookies.refreshToken
+  ✅ jwt.verify(refreshToken, REFRESH_SECRET)
+  ✅ User.findOne({ refreshToken }) → verify in DB
+  ✅ Create new access token → set new cookie
+  ✅ req.userId = user._id → next()
+  ❌ Any failure → 401 Session expired
 ```
 
 ---
@@ -235,9 +257,10 @@ Request: (cookie sent automatically by browser)
   username:               String  (required, trimmed)
   email:                  String  (required, unique, lowercase, regex validated)
   password:               String  (required, min 6 chars, hashed)
-  resetPasswordToken:     String  (optional)
-  resetPasswordExpiresAt: Date    (optional)
-  lastLogin:              Date    (optional)
+  refreshToken:           String  (optional — set on login, cleared on logout)
+  resetPasswordToken:     String  (optional — for forgot password flow)
+  resetPasswordExpiresAt: Date    (optional — 1 hour expiry)
+  lastLogin:              Date    (optional — updated on each login)
   createdAt:              Date    (auto — timestamps)
   updatedAt:              Date    (auto — timestamps)
 }
@@ -247,38 +270,54 @@ Request: (cookie sent automatically by browser)
 
 ## 🔒 Security Features
 
+### Access + Refresh Token System
+
+```
+Single token (old):
+  Token stolen → attacker has 7 days ❌
+ 
+Access + Refresh (new):
+  Access token stolen  → useless in 15 minutes ✅
+  Refresh token stolen → delete from DB on logout → blocked ✅
+```
+
+| | Access Token | Refresh Token |
+|---|---|---|
+| Expiry | 15 minutes | 7 days |
+| Stored in | httpOnly cookie | httpOnly cookie + DB |
+| Used for | Every request | Getting new access token |
+| If stolen | Useless in 15 min | Delete from DB → blocked |
+
+### Cookie Expiry vs JWT Expiry
+ 
+```
+Cookie maxAge  → when BROWSER deletes the cookie (client)
+JWT expiresIn  → when SERVER rejects the token (server)
+→ Two independent systems
+→ Token can still be in cookie but server rejects it if JWT expired
+```
+
 ### Password Hashing
-```
-Plain: "hello123"
-         ↓ bcryptjs.hash(password, 10)
-Hashed: "$2a$10$N9qo8uLOickgx2ZMRZoMye..."
 
-Random salt generated every time
-→ Same password = different hash always
-→ One way — cannot be reversed
-→ bcryptjs.compare() to verify
 ```
-
-### JWT Token Structure
-```
-eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySUQiOiIxMjMifQ.abc123
-        ↑                      ↑                  ↑
-    Header               Payload              Signature
-  (algorithm)          (userID + exp)      (secret stamp)
+"hello123" → bcryptjs.hash(password, 10) → "$2a$10$..."
+Random salt every time → same password = different hash always
+One way — cannot be reversed → bcryptjs.compare() to verify
 ```
 
 ### httpOnly Cookie
+
 ```
 secure: true        → HTTPS only
 httpOnly: true      → JS cannot read (XSS protection)
 sameSite: 'strict'  → same site only (CSRF protection)
-maxAge: 7 days      → auto expiry
 ```
 
 ### Rate Limiting
+
 ```
 Auth routes → max 10 requests / 15 minutes / per IP
-→ Prevents brute force attacks on login
+→ Prevents brute force attacks
 → Returns 429 Too Many Requests when exceeded
 ```
 
@@ -348,8 +387,8 @@ authLimiter           → check rate limit (max 10/15min)
       ↓
 authRouter            → match route
       ↓
-verifyToken*          → verify JWT (*protected routes only)
-      ↓
+verifyToken*          → check access token → try refresh if expired
+      ↓                 (*protected routes only)
 Controller            → run business logic
       ↓
 Response sent
@@ -359,18 +398,14 @@ Response sent
 
 ## ⏳ Coming Soon
 
-- [ ] CORS Configuration for frontend
 - [ ] Helmet.js security headers
 - [ ] Redis for persistent rate limiting
-- [ ] Refresh token system
-- [ ] OAuth — Google & GitHub login
+- [ ] Refresh token system *
 - [ ] Input sanitization (NoSQL injection prevention)
 - [ ] Winston logging
-- [ ] TypeScript migration
-- [ ] Docker setup
 - [ ] Email templates with MJML
 - [ ] Two-Factor Authentication (2FA)
-- [ ] Account deletion flow -->
+- [ ] Account deletion flow --> * 
 
 ---
 
@@ -385,13 +420,14 @@ npm start       # Start without nodemon (production)
 
 ## 🧪 Testing with Postman
 
-1. Import all routes into a Postman collection
-2. Register a user → check Mailtrap for welcome email
-3. Login → check Cookies tab for JWT token
-4. Hit `/profile` without token → get 401
-5. Hit `/profile` with token → get userId
-6. Forgot password → copy token from Mailtrap link
-7. Reset password → login with new password ✅
+1. Register → check Mailtrap for welcome email → check cookie for both tokens
+2. Login → verify `accessToken` + `refreshToken` cookies set
+3. Hit `/profile` without token → 401
+4. Hit `/profile` with valid cookie → userId returned
+5. Wait 15 min OR manually expire → hit `/profile` → auto silent refresh ✅
+6. Logout → both cookies cleared + DB refreshToken cleared
+7. Hit `/profile` after logout → 401 ✅
+8. Forgot password → copy token from Mailtrap → reset password → login ✅
 
 ---
 
