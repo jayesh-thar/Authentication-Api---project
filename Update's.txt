@@ -1105,6 +1105,18 @@ Refresh token rotation
 
 # Rotation detects theft automatically. If someone steals and uses your token — you get kicked out — you KNOW something happened.
 
+─────────────────────────────────────
+Account Deletion
+─────────────────────────────────────
+
+- Add new filed in schema: 'accountDeleteToken' and 'accountDeleteExpiryAt'
+- Token generate -> crypto.randomBytes(32).toString('hex')
+
+routes: 
+  '/delete-account' => verify token -> find user(token) -> generate 'accountDeleteToken' & send via email
+  '/confirm-delete/:token' => 'accountDeleteToken' verify -> delete user -> delete all token's in cookie -> res("Account deleted successfully") 
+
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                          FINAL PROJECT — COMPLETE OVERVIEW
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1138,6 +1150,8 @@ All API Endpoints:
   POST   /api/auth/forgot-password   → Public
   POST   /api/auth/reset-password/:token → Public
   GET    /api/auth/profile           → Protected (verifyToken)
+  GET    /api/auth/delete-account           → Protected (accountDeleteToken generate and send via email)
+  GET    /api/auth/confirm-delete/:token    → Protected (account deletion | delete all token in cookie)
 
 Features Completed:
   ✅ User Registration with validation
@@ -1167,6 +1181,7 @@ Features Completed:
   ✅ try/catch error handling on all controllers
   ✅ Proper HTTP status codes throughout
   ✅ Password excluded from all responses
+  ✅ Account deletion
 
 Coming Soon / Future Improvements:
   ⏳ Helmet.js security headers
@@ -1174,7 +1189,6 @@ Coming Soon / Future Improvements:
   ⏳ Input sanitization (NoSQL injection)
   ⏳ Winston logging
   ⏳ Two-Factor Authentication (2FA)
-  ⏳ Account deletion flow *
 
  
 All Bugs Fixed (35 total):

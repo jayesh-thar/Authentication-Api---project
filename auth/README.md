@@ -7,9 +7,9 @@
 
 ## 🌟 What is AuthFlow?
 
-A complete, production-ready **REST API** for user authentication built with **Node.js**, **Express**, and **MongoDB**. Covers everything from registration to password reset — with JWT tokens, httpOnly cookies, email notifications, and rate limiting.
+A complete, production-ready **REST API** for user authentication built with **Node.js**, **Express**, and **MongoDB**. Covers everything from registration to account deletion — with Access + Refresh JWT tokens, token rotation, httpOnly cookies, email notifications, rate limiting, and protected routes.
 
-Started with `console.log('hello')` → Ended with a full auth system. 💪
+Started with `console.log('hello')` → Ended with a full production auth system. 💪
 
 ---
 
@@ -20,20 +20,25 @@ Started with `console.log('hello')` → Ended with a full auth system. 💪
 | User Registration | ✅ Done |
 | User Login | ✅ Done |
 | User Logout | ✅ Done |
+| Account Deletion (with email confirmation) | ✅ Done |
 | Access Token (15 min) | ✅ Done |
 | Refresh Token (7 days) | ✅ Done |
+| Refresh Token Rotation | ✅ Done |
 | Silent Token Refresh | ✅ Done |
 | Refresh Token stored in DB | ✅ Done |
-| Refresh Token Rotation | ✅ Done |
 | httpOnly Cookie Management | ✅ Done |
 | Password Hashing (bcrypt) | ✅ Done |
 | Forgot Password Flow | ✅ Done |
 | Password Reset via Email | ✅ Done |
 | Welcome Email on Register | ✅ Done |
+| Password Reset Success Email | ✅ Done |
+| Account Deletion Confirmation Email | ✅ Done |
 | Protected Routes (Middleware) | ✅ Done |
-| Rate Limiting (Brute Force) | ✅ Done |
+| Rate Limiting (Brute Force Protection) | ✅ Done |
+| Email Format Validation (Regex) | ✅ Done |
 | Input Validation | ✅ Done |
 | Error Handling (try/catch) | ✅ Done |
+| Last Login Tracking | ✅ Done |
 
 ---
 
@@ -48,10 +53,11 @@ auth/
 │   │
 │   ├── controllers/
 │   │   └── auth.controller.js    ← register, login, logout,
-│   │                                forgotPassword, resetPassword
+│   │                                forgotPassword, resetPassword,
+│   │                                deleteAccount, confirmDelete
 │   ├── middleware/
 │   │   └── auth.middleware.js    ← Access + Refresh token verification
-│   │
+│   │                                with token rotation
 │   ├── models/
 │   │   └── user.model.js         ← Mongoose user schema
 │   │
@@ -76,13 +82,14 @@ auth/
 |---|---|
 | `express` | Web server framework |
 | `mongoose` | MongoDB ODM |
-| `bcryptjs` | Password hashing |
+| `bcryptjs` | Password hashing with salt rounds |
 | `jsonwebtoken` | JWT creation & verification |
-| `cookie-parser` | Read cookies from requests |
-| `nodemailer` | Send emails |
-| `dotenv` | Environment variables |
+| `cookie-parser` | Read cookies from incoming requests |
+| `nodemailer` | Send transactional emails |
+| `dotenv` | Environment variable management |
 | `express-rate-limit` | Rate limiting / brute force protection |
 | `nodemon` | Auto-restart in development |
+| `crypto` | Built-in Node.js — secure random token generation |
 
 ---
 
@@ -93,18 +100,18 @@ Create a `.env` file in root:
 ```env
 # Server
 PORT=5000
- 
+
 # MongoDB Atlas
 MONGO_URI=mongodb+srv://user:password@cluster.mongodb.net/dbname
- 
-# Access Token (short lived)
+
+# Access Token (short lived — 15 minutes)
 ACCESS_TOKEN_SECRET=your_256bit_access_secret
 ACCESS_TOKEN_EXPIRY=15m
- 
-# Refresh Token (long lived)
+
+# Refresh Token (long lived — 7 days)
 REFRESH_TOKEN_SECRET=your_different_256bit_refresh_secret
 REFRESH_TOKEN_EXPIRY=7d
- 
+
 # Mailtrap Sandbox
 MAILTRAP_HOST=sandbox.smtp.mailtrap.io
 MAILTRAP_PORT=2525
@@ -114,8 +121,8 @@ MAIL_FROM=noreply@authflow.dev
 ```
 
 > ⚠️ Two separate secrets for access and refresh tokens.
-> Never use the same secret for both — breaking one would break both.
-> Never commit `.env` to Git.
+> Never use the same secret for both — breaking one breaks both.
+> Never commit `.env` to Git. Always add to `.gitignore`.
 
 ---
 
@@ -152,12 +159,14 @@ Base URL: `http://localhost:5000/api/auth`
 | `POST` | `/login` | Login existing user | Public |
 | `POST` | `/logout` | Logout user | Public |
 | `POST` | `/forgot-password` | Request password reset | Public |
-| `POST` | `/reset-password/:token` | Reset with token | Public |
+| `POST` | `/reset-password/:token` | Reset password with token | Public |
 | `GET` | `/profile` | Protected route example | 🔒 Private |
+| `DELETE` | `/delete-account` | Request account deletion | 🔒 Private |
+| `POST` | `/confirm-delete/:token` | Confirm account deletion | Public |
 
 ---
 
-## 🔄 Auth Flow — Step by Step
+## 🔄 Auth Flows — Step by Step
 
 ### 📝 Register `POST /register`
 
@@ -186,23 +195,53 @@ Request: { email, password }
 ✅ Find user by email in DB
 ✅ bcryptjs.compare(plainPassword, hashedPassword)
 ✅ Update lastLogin timestamp
-✅ Generate access token (15m) + refresh token (7d)
-✅ Save refresh token to DB
+✅ Generate new access token (15m) + new refresh token (7d)
+✅ Save new refresh token to DB (overwrites old)
 ✅ Store both in httpOnly cookies
 ✅ Return 200 → success message
-✅ refresh token rotation - when login time - every request for login -> refresh token change
 ```
 
 ### 🚪 Logout `POST /logout`
 
 ```
-Request: (cookies sent automatically)
+Request: (cookies sent automatically by browser)
         ↓
-✅ Get refresh token from cookie
+✅ Get refresh token from req.cookies.refreshToken
 ✅ Find user by refresh token in DB
-✅ Clear refresh token from DB
-✅ Clear both cookies (accessToken + refreshToken)
+✅ Clear refresh token from DB (user.refreshToken = undefined)
+✅ Clear both cookies (accessToken + refreshToken → maxAge: 0)
 ✅ Return 200 → success message
+```
+
+### 🛡️ Protected Route — Middleware Flow
+
+```
+Request hits protected route (e.g. /profile)
+        ↓
+TRY — Check access token:
+  Read from req.cookies.accessToken
+  No token? → 401 "Please Login"
+  jwt.verify(accessToken, ACCESS_SECRET)
+  Valid → req.userId = decoded.userID → next() ✅
+  Expired/Invalid → catch runs
+        ↓
+CATCH — Refresh token flow (with rotation):
+  Read from req.cookies.refreshToken
+  No token? → 401 "Please login again"
+  jwt.verify(refreshToken, REFRESH_SECRET)
+  User.findOne({ refreshToken }) → verify exists in DB
+  Not found? → 401 "Invalid session"
+        ↓
+  ROTATION:
+  Delete old refresh token from DB
+  Create NEW refresh token → save to DB
+  Set new refresh token cookie
+        ↓
+  Create new access token → set new cookie
+  req.userId = user._id → next() ✅
+        ↓
+INNER CATCH — If refresh flow fails:
+  → 401 "Session expired - Please login again"
 ```
 
 ### 📧 Forgot Password `POST /forgot-password`
@@ -211,43 +250,50 @@ Request: (cookies sent automatically)
 Request: { email }
         ↓
 ✅ Find user by email → 404 if not found
-✅ Generate reset token → crypto.randomBytes(32)
+✅ Generate reset token → crypto.randomBytes(32).toString('hex')
 ✅ Save token + expiry (1 hour) to DB
 ✅ Send reset email with token link
-✅ Return 200 → success message
+✅ Return 200 → "Check your email"
 ```
 
 ### 🔄 Reset Password `POST /reset-password/:token`
 
 ```
-Request: { newPassword } + token in URL
+Request: { newPassword } + token in URL params
         ↓
-✅ Find user by token + check expiry ($gt Date.now())
-✅ Hash new password with bcryptjs
+✅ Validate newPassword field
+✅ Find user → token match + expiry check ($gt Date.now())
+✅ Not found? → 400 "Invalid or expired token"
+✅ Hash new password → bcryptjs.hash(newPassword, 10)
 ✅ Update password in DB
 ✅ Clear resetPasswordToken + resetPasswordExpiresAt
 ✅ Send password reset success email
 ✅ Return 200 → success message
 ```
 
-### 🛡️ Protected Route `GET /profile`
+### 🗑️ Delete Account `DELETE /delete-account`
 
 ```
-Request hits protected route
+Request: (must be logged in — verifyToken middleware runs first)
         ↓
-TRY — Check access token:
-  ✅ Read from req.cookies.accessToken
-  ✅ jwt.verify(accessToken, ACCESS_SECRET)
-  ✅ Valid → req.userId = decoded.userID → next()
-  ❌ Expired/Invalid → try refresh token
+✅ Get userId from req.userId (set by middleware)
+✅ Find user by userId
+✅ Generate delete confirmation token → crypto.randomBytes(32)
+✅ Save token + expiry (15 minutes) to DB
+✅ Send confirmation email with token link
+✅ Return 200 → "Check your email to confirm deletion"
+```
+
+### ✅ Confirm Delete `POST /confirm-delete/:token`
+
+```
+Request: token in URL params
         ↓
-CATCH — Refresh token flow:
-  ✅ Read from req.cookies.refreshToken
-  ✅ jwt.verify(refreshToken, REFRESH_SECRET)
-  ✅ User.findOne({ refreshToken }) → verify in DB
-  ✅ Create new access token → set new cookie
-  ✅ req.userId = user._id → next()
-  ❌ Any failure → 401 Session expired
+✅ Find user → token match + expiry check ($gt Date.now())
+✅ Not found? → 400 "Invalid or expired token"
+✅ User.findByIdAndDelete(user._id) → permanently deleted
+✅ Clear both cookies (accessToken + refreshToken)
+✅ Return 200 → "Account deleted successfully"
 ```
 
 ---
@@ -256,15 +302,17 @@ CATCH — Refresh token flow:
 
 ```javascript
 {
-  username:               String  (required, trimmed)
-  email:                  String  (required, unique, lowercase, regex validated)
-  password:               String  (required, min 6 chars, hashed)
-  refreshToken:           String  (optional — set on login, cleared on logout)
-  resetPasswordToken:     String  (optional — for forgot password flow)
-  resetPasswordExpiresAt: Date    (optional — 1 hour expiry)
-  lastLogin:              Date    (optional — updated on each login)
-  createdAt:              Date    (auto — timestamps)
-  updatedAt:              Date    (auto — timestamps)
+  username:                String  (required, trimmed)
+  email:                   String  (required, unique, lowercase, regex validated)
+  password:                String  (required, min 6 chars, always hashed)
+  refreshToken:            String  (optional — set on login, cleared on logout)
+  resetPasswordToken:      String  (optional — for forgot password flow)
+  resetPasswordExpiresAt:  Date    (optional — 1 hour expiry)
+  accountDeleteToken:      String  (optional — for account deletion confirmation)
+  accountDeleteExpiryAt:   Date    (optional — 15 minutes expiry)
+  lastLogin:               Date    (optional — updated on each login)
+  createdAt:               Date    (auto — mongoose timestamps)
+  updatedAt:               Date    (auto — mongoose timestamps)
 }
 ```
 
@@ -275,67 +323,102 @@ CATCH — Refresh token flow:
 ### Access + Refresh Token System
 
 ```
-Single token (old):
-  Token stolen → attacker has 7 days ❌
- 
-Access + Refresh (new):
+Single token (old approach):
+  Token stolen → attacker has 7 days of full access ❌
+
+Access + Refresh (current approach):
   Access token stolen  → useless in 15 minutes ✅
-  Refresh token stolen → delete from DB on logout → blocked ✅
+  Refresh token stolen → logout clears from DB → blocked ✅
 ```
 
 | | Access Token | Refresh Token |
 |---|---|---|
 | Expiry | 15 minutes | 7 days |
-| Stored in | httpOnly cookie | httpOnly cookie + DB |
-| Used for | Every request | Getting new access token |
-| If stolen | Useless in 15 min | Delete from DB → blocked |
+| Stored in | httpOnly cookie only | httpOnly cookie + DB |
+| Purpose | Every API request | Getting new access token |
+| If stolen | Auto-expires in 15 min | Logout clears from DB |
+| Stateless | ✅ Yes | ❌ No (needs DB) |
+
+### Refresh Token Rotation
+
+```
+WITHOUT rotation:
+  Same refresh token reused forever → stolen token works indefinitely ❌
+  Both attacker and real user logged in simultaneously → undetectable
+
+WITH rotation:
+  Every refresh → old token deleted → new token issued
+  Attacker uses stolen token first → real user's token invalidated
+  Real user gets 401 → knows something is wrong ✅
+  Theft detected automatically
+```
 
 ### Cookie Expiry vs JWT Expiry
- 
-```
-Cookie maxAge  → when BROWSER deletes the cookie (client)
-JWT expiresIn  → when SERVER rejects the token (server)
-→ Two independent systems
-→ Token can still be in cookie but server rejects it if JWT expired
-```
-
-### Password Hashing
 
 ```
-"hello123" → bcryptjs.hash(password, 10) → "$2a$10$..."
-Random salt every time → same password = different hash always
-One way — cannot be reversed → bcryptjs.compare() to verify
+Two completely independent systems:
+
+Cookie maxAge  → BROWSER deletes cookie at this time
+JWT expiresIn  → SERVER rejects token after this time
+
+→ Token can still exist in cookie but server rejects it if JWT expired
+→ Logout (maxAge: 0) tells browser to delete cookie immediately
+→ JWT expiry is baked inside token string — never deleted, just rejected
 ```
 
-### httpOnly Cookie
+### Password Hashing (bcrypt)
 
 ```
-secure: true        → HTTPS only
-httpOnly: true      → JS cannot read (XSS protection)
-sameSite: 'strict'  → same site only (CSRF protection)
+"hello123" → bcryptjs.hash(password, 10) → "$2a$10$randomsalt..."
+
+Random salt generated every time
+→ Same password = different hash always
+→ One way — mathematically impossible to reverse
+→ bcryptjs.compare() extracts salt from hash → rehashes → compares
+→ 10 rounds = intentionally slow → brute force takes years
+```
+
+### httpOnly Cookies
+
+```
+httpOnly: true    → JavaScript cannot read cookie → XSS protection
+secure: true      → HTTPS only → no plain HTTP transmission
+sameSite: strict  → only sent to same origin → CSRF protection
 ```
 
 ### Rate Limiting
 
 ```
 Auth routes → max 10 requests / 15 minutes / per IP
-→ Prevents brute force attacks
+→ Prevents brute force login attacks
+→ Prevents password reset email spam
 → Returns 429 Too Many Requests when exceeded
+→ Tracked by IP address in memory
 ```
 
 ---
 
-## 📧 Email Setup
+## 📧 Email System
 
-Using **Mailtrap Sandbox** for development:
+Using **Mailtrap Sandbox** for development — emails never reach real users:
 
 ```
-Your Code → Nodemailer → Mailtrap SMTP → Mailtrap Dashboard
-                                         (emails caught here)
-                                         (never sent to real users)
+Your Code → Nodemailer → Mailtrap SMTP → Mailtrap Dashboard ✅
+                         (sandbox catches all — safe for testing)
 ```
 
-For production — swap `.env` values to real SMTP:
+### Emails Sent
+
+| Trigger | Subject | Contains |
+|---|---|---|
+| Register | Welcome to MyApp 🎉 | Username, email, get started button |
+| Forgot Password | Reset Password Request | Reset link (1hr expiry) |
+| Reset Password | Password Reset Successful ✅ | Reset time, security warning |
+| Delete Account | Account Deletion Request | Confirmation link (15min expiry) |
+
+### Switch to Production
+
+Just change `.env` values — code stays exactly the same:
 
 | Service | Free Tier | Best For |
 |---|---|---|
@@ -344,34 +427,38 @@ For production — swap `.env` values to real SMTP:
 | SendGrid | 100/day | Large scale |
 | Brevo | 300/day | Good free tier |
 
-> Same code — just change `.env` values. 🎯
-
 ---
 
-## 💡 Core Concepts Learned
+## 💡 Core Concepts
 
 ### JWT vs Session
+
 | | JWT (Stateless) | Session (Stateful) |
 |---|---|---|
 | Storage | Client (cookie) | Server (DB/memory) |
 | Scalability | ✅ Easy | ❌ Complex |
-| Revocation | ❌ Hard | ✅ Easy |
+| Revocation | ⚠️ Hard (use refresh token) | ✅ Easy |
+| DB call per request | ❌ No | ✅ Yes |
 | Used by | Most modern APIs | Banking apps |
 
 ### bcrypt vs SHA256
+
 | | SHA256 | bcrypt |
 |---|---|---|
-| Salt | ❌ No | ✅ Random every time |
-| Same input = same output | ✅ Always | ❌ Never |
-| Speed | ⚡ Very fast | 🐢 Slow (intentional) |
-| For passwords | ❌ Vulnerable | ✅ Perfect |
+| Salt | ❌ No salt | ✅ Random salt every time |
+| Same input → same output | ✅ Always | ❌ Never |
+| Speed | ⚡ Very fast | 🐢 Intentionally slow |
+| Rainbow table safe | ❌ Vulnerable | ✅ Protected |
+| For passwords | ❌ Never use | ✅ Always use |
 
 ### Cookie vs localStorage
+
 | | Cookie | localStorage |
 |---|---|---|
 | Auto sent with requests | ✅ Yes | ❌ Manual |
-| httpOnly option | ✅ Yes | ❌ No |
-| XSS safe | ✅ With httpOnly | ❌ Vulnerable |
+| httpOnly option | ✅ Yes (JS can't read) | ❌ No |
+| XSS attack safe | ✅ With httpOnly | ❌ Vulnerable |
+| Expiry control | ✅ maxAge | ❌ Manual |
 | Best for | Auth tokens | Non-sensitive data |
 
 ---
@@ -379,56 +466,81 @@ For production — swap `.env` values to real SMTP:
 ## 🗺️ Middleware Chain
 
 ```
-Every Request
-      ↓
-express.json()        → parse request body
-      ↓
-cookieParser()        → parse cookies
-      ↓
-authLimiter           → check rate limit (max 10/15min)
-      ↓
-authRouter            → match route
-      ↓
-verifyToken*          → check access token → try refresh if expired
-      ↓                 (*protected routes only)
-Controller            → run business logic
-      ↓
-Response sent
-```
-
-<!-- ---
-
-## ⏳ Coming Soon
-
-- [ ] Helmet.js security headers
-- [ ] Redis for persistent rate limiting
-- [ ] Input sanitization (NoSQL injection prevention)
-- [ ] Winston logging
-- [ ] Email templates with MJML
-- [ ] Two-Factor Authentication (2FA)
-- [ ] Account deletion flow --> * 
-
----
-
-## 📁 Scripts
-
-```bash
-npm run dev     # Start with nodemon (development)
-npm start       # Start without nodemon (production)
+Every Incoming Request
+        ↓
+express.json()          → parse JSON request body
+        ↓
+cookieParser()          → parse cookies → available as req.cookies
+        ↓
+authLimiter             → check rate limit (10 req/15min per IP)
+        ↓
+authRouter              → match URL to route
+        ↓
+verifyToken*            → check accessToken → if expired try refreshToken
+        ↓                  with rotation (*protected routes only)
+Controller              → run business logic
+        ↓
+Response sent to client
 ```
 
 ---
 
 ## 🧪 Testing with Postman
 
-1. Register → check Mailtrap for welcome email → check cookie for both tokens
-2. Login → verify `accessToken` + `refreshToken` cookies set
-3. Hit `/profile` without token → 401
-4. Hit `/profile` with valid cookie → userId returned
-5. Wait 15 min OR manually expire → hit `/profile` → auto silent refresh ✅
-6. Logout → both cookies cleared + DB refreshToken cleared
-7. Hit `/profile` after logout → 401 ✅
-8. Forgot password → copy token from Mailtrap → reset password → login ✅
+```
+1. Register new user
+   → Check Mailtrap for welcome email
+   → Check Cookies tab for accessToken + refreshToken
+
+2. Login
+   → Verify both tokens in cookies
+   → Check lastLogin updated in MongoDB
+
+3. Hit /profile without token → 401 Unauthorized
+
+4. Hit /profile with valid cookie → { userId: '...' }
+
+5. Logout
+   → Both cookies cleared
+   → refreshToken removed from DB
+   → Hit /profile → 401 ✅
+
+6. Forgot Password
+   → Copy token from reset link in Mailtrap
+   → POST /reset-password/TOKEN with { newPassword }
+   → Login with new password ✅
+
+7. Delete Account
+   → DELETE /delete-account (must be logged in)
+   → Copy token from confirmation email
+   → POST /confirm-delete/TOKEN
+   → Check MongoDB — user gone ✅
+   → Try login → should fail ✅
+```
+
+---
+
+## 📁 Scripts
+
+```bash
+npm run dev     # Start with nodemon (auto-restart on changes)
+npm start       # Start without nodemon (production)
+```
+
+---
+
+## ⏳ Coming Soon
+
+- [ ] CORS configuration for frontend connection
+- [ ] Helmet.js security headers
+- [ ] Redis for persistent rate limiting (survives server restart)
+- [ ] OAuth — Google & GitHub login
+- [ ] Input sanitization (NoSQL injection prevention)
+- [ ] Winston logging (structured production logs)
+- [ ] TypeScript migration
+- [ ] Docker setup + deployment
+- [ ] Two-Factor Authentication (2FA)
+- [ ] Role-based access control (RBAC)
 
 ---
 
@@ -453,8 +565,10 @@ MIT License — feel free to use, modify, and distribute.
 > This project was built from complete scratch — understanding every single line.
 > Not just copying code — but knowing **why** every decision was made.
 >
-> From `console.log('hello')` to JWT tokens, bcrypt hashing, email flows,
-> rate limiting, and protected routes.
+> From `console.log('hello')` to JWT access + refresh tokens, token rotation,
+> bcrypt hashing, email flows, rate limiting, protected routes, and account deletion.
+>
+> 35+ real bugs debugged. 40+ concepts mastered. 0 lines copy-pasted.
 >
 > **That's not just a project. That's a mindset.** 🔥
 >
@@ -467,8 +581,8 @@ MIT License — feel free to use, modify, and distribute.
 
 **Built with 💜 by Jayesh**
 
-*AuthFlow v1.0.0 · 2026*
+*AuthFlow v1.2.0 · 2026*
 
-`Node.js` · `Express` · `MongoDB` · `JWT` · `bcrypt` · `Nodemailer`
+`Node.js` · `Express` · `MongoDB` · `JWT` · `bcrypt` · `Nodemailer` · `Mailtrap`
 
 </div>
