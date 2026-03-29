@@ -33,9 +33,15 @@ const userSchema = new mongoose.Schema(
     lastLogin: {
       type: Date,
     },
+    accountDeleteToken: {
+      type: String
+    },
+    accountDeleteExpiryAt: {
+      type: Date
+    },
   },  
   { timestamps: true },
-); //vFor createdAt and updatedAt to work automatically
+); // For createdAt and updatedAt to work automatically
 
 const User = mongoose.model("User", userSchema);
 

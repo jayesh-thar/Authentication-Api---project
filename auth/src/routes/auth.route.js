@@ -1,5 +1,5 @@
 import express from "express";
-import { register, login, logout, forgotPassword, resetPassword } from "../controllers/auth.controller.js";
+import { register, login, logout, forgotPassword, resetPassword, deleteAccount, confirmDelete } from "../controllers/auth.controller.js";
 import verifyToken from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
@@ -37,11 +37,12 @@ router.get("/profile", verifyToken, (req, res) => {
         })
 });
 
-router.post('/forget-password', forgotPassword);
-
+router.post('/forgot-password', forgotPassword);
 router.post('/reset-password/:token', resetPassword);
 
 
+router.delete('/delete-account', verifyToken, deleteAccount)
+router.post('/confirm-delete/:token', confirmDelete)
 
 
 export default router;

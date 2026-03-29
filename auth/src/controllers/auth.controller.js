@@ -227,10 +227,10 @@ const forgotPassword = async (req, res) => {
         <p>Click the link below to reset your password:</p>
         <a href="http://localhost:5000/api/auth/reset-password/${resetToken}">
             Reset Password
-        </a>
+            </a>
         <p>This link expires in <strong>1 hour</strong>.</p>
         <p>If you didn't request this, please ignore this email.</p>
-      `,
+        `,
     });
     return res.status(200).json({
       success: true,
@@ -277,12 +277,12 @@ const resetPassword = async (req, res) => {
       to: user.email,
       subject: "Password Reset Successful",
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4;">
     
     <div style="background-color: #16a34a; padding: 40px; border-radius: 10px 10px 0 0; text-align: center;">
-        <h1 style="color: white; margin: 0; font-size: 28px;">Password Reset Successful ✅</h1>
+    <h1 style="color: white; margin: 0; font-size: 28px;">Password Reset Successful ✅</h1>
         <p style="color: #bbf7d0; margin-top: 10px;">Your password has been updated</p>
-    </div>
+        </div>
 
     <div style="background-color: white; padding: 40px; border-radius: 0 0 10px 10px;">
         <h2 style="color: #333;">Hey ${user.username}, 👋</h2>
@@ -290,38 +290,38 @@ const resetPassword = async (req, res) => {
             Your password has been successfully reset. 
             You can now login with your new password.
         </p>
-
+        
         <div style="background-color: #f0fdf4; border-left: 4px solid #16a34a; padding: 15px; margin: 20px 0; border-radius: 4px;">
             <p style="margin: 0; color: #555;">🕐 Reset Time: ${new Date().toLocaleString()}</p>
         </div>
 
         <div style="background-color: #fff7ed; border-left: 4px solid #ea580c; padding: 15px; margin: 20px 0; border-radius: 4px;">
-            <p style="margin: 0; color: #9a3412;">
-                ⚠️ If you didn't reset your password, please contact support immediately.
-                Your account may be compromised.
+        <p style="margin: 0; color: #9a3412;">
+        ⚠️ If you didn't reset your password, please contact support immediately.
+        Your account may be compromised.
             </p>
         </div>
-
+        
         <div style="text-align: center; margin: 30px 0;">
-            <a href="http://localhost:3000/login" 
-               style="background-color: #16a34a; color: white; padding: 14px 40px; 
-                      border-radius: 6px; text-decoration: none; font-size: 16px;
+        <a href="http://localhost:3000/login" 
+        style="background-color: #16a34a; color: white; padding: 14px 40px; 
+        border-radius: 6px; text-decoration: none; font-size: 16px;
                       font-weight: bold;">
                 Login Now →
             </a>
         </div>
 
         <p style="color: #999; font-size: 13px; line-height: 1.6; text-align: center;">
-            If you have any questions, contact our support team.
+        If you have any questions, contact our support team.
         </p>
-    </div>
+        </div>
 
-    <p style="text-align: center; color: #aaa; font-size: 12px; margin-top: 20px;">
+        <p style="text-align: center; color: #aaa; font-size: 12px; margin-top: 20px;">
         © 2024 MyApp. All rights reserved.
-    </p>
+        </p>
 
 </div>
-      `,
+`,
     });
     return res.status(200).json({
       success: true,
@@ -336,4 +336,85 @@ const resetPassword = async (req, res) => {
   }
 };
 
-export { register, login, logout, forgotPassword, resetPassword };
+// @desc    Delete Account
+// @route   POST /api/auth/delete-account
+// @access  Public
+
+const deleteAccount = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Can't delete account - User not found",
+      });
+    }
+
+    const deleteToken = crypto.randomBytes(32).toString("hex");
+    user.accountDeleteToken = deleteToken;
+    user.accountDeleteExpiryAt = Date.now() + 15 * 60 * 1000;
+    await user.save();
+
+    sendEmail({
+      to: user.email,
+      subject: "Request to delete account.",
+      html: `
+      <p>Requested to delete account of username: ${user.username}</p>
+      </br>
+      <p>Redirect to this link: http://localhost:5000/api/auth/confirm-delete/${deleteToken}</p>
+      
+    `,
+    });
+    return res.status(200).json({
+      success: true,
+      message: "Check your email to confirm account deletion",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Server failed/issue. Try again after few min.",
+      error: error.message,
+    });
+  }
+};
+
+const confirmDelete = async (req, res) => {
+  try {
+    const token = req.params.token;
+    const user = await User.findOne({
+      accountDeleteToken: token,
+      accountDeleteExpiryAt: { $gt: Date.now() },
+    });
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired token.",
+      });
+    }
+    await User.findByIdAndDelete(user._id);
+    res.cookie("accessToken", "", { maxAge: 0 });
+    res.cookie("refreshToken", "", { maxAge: 0 });
+
+    return res.status(200).json({
+      success: true,
+      message: "Account deleted successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Server failed/issue. Try again after few min.",
+      error: error.message,
+    });
+  }
+};
+
+export {
+  register,
+  login,
+  logout,
+  forgotPassword,
+  resetPassword,
+  deleteAccount,
+  confirmDelete,
+};
