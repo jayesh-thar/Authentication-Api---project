@@ -23,7 +23,7 @@ const verifyToken = async (req, res, next) => {
           message: "Unauthorized access - Please Login",
         });
       }
-      
+
       jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
 
       const user = await User.findOne({ refreshToken });
@@ -33,6 +33,22 @@ const verifyToken = async (req, res, next) => {
           message: "Invalid session - Please login again",
         });
       }
+
+      // refresh token rotation
+      const newRefreshToken = jwt.sign(
+        {userID: user._id},
+        process.env.REFRESH_TOKEN_SECRET,
+        { expiresIn: process.env.REFRESH_TOKEN_EXPIRY },
+      );
+      user.refreshToken = newRefreshToken;
+      await user.save();
+      res.cookie("refreshToken", newRefreshToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "strict",
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+      });
+
       const accessToken = jwt.sign(
         { userID: user._id },
         process.env.ACCESS_TOKEN_SECRET,
@@ -45,6 +61,7 @@ const verifyToken = async (req, res, next) => {
         maxAge: 1000 * 60 * 15,
       });
       req.userId = user._id;
+
       next();
     } catch (error) {
       return res.status(401).json({

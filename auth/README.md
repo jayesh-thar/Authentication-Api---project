@@ -24,6 +24,7 @@ Started with `console.log('hello')` → Ended with a full auth system. 💪
 | Refresh Token (7 days) | ✅ Done |
 | Silent Token Refresh | ✅ Done |
 | Refresh Token stored in DB | ✅ Done |
+| Refresh Token Rotation | ✅ Done |
 | httpOnly Cookie Management | ✅ Done |
 | Password Hashing (bcrypt) | ✅ Done |
 | Forgot Password Flow | ✅ Done |
@@ -189,6 +190,7 @@ Request: { email, password }
 ✅ Save refresh token to DB
 ✅ Store both in httpOnly cookies
 ✅ Return 200 → success message
+✅ refresh token rotation - when login time - every request for login -> refresh token change
 ```
 
 ### 🚪 Logout `POST /logout`
@@ -400,7 +402,6 @@ Response sent
 
 - [ ] Helmet.js security headers
 - [ ] Redis for persistent rate limiting
-- [ ] Refresh token system *
 - [ ] Input sanitization (NoSQL injection prevention)
 - [ ] Winston logging
 - [ ] Email templates with MJML

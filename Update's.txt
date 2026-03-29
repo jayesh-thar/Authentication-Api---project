@@ -1067,16 +1067,43 @@ KEY CONCEPTS LEARNED IN THIS UPDATE
 BUGS FIXED IN THIS UPDATE
 ─────────────────────────────────────
  
-  26. generateToken not awaited in login → refreshToken not saved to DB
-  27. logout clearing 'token' cookie → updated to 'accessToken' + 'refreshToken'
-  28. User.findById({ refreshToken }) → User.findOne({ refreshToken })
-  29. Missing user found check after findOne in middleware catch
-  30. process.env.ACCESS_EXPIRY → process.env.ACCESS_TOKEN_EXPIRY
-  31. jwt.sign(decoded.userID) → jwt.sign({ userID: user._id })
-  32. User.accessToken = accessToken → user.accessToken (document not Model)
-  33. Unused decoded variable in catch → removed
-  34. logout not async → has await inside → needs async
-  35. user.save() not awaited in logout → data might not save before response
+  -> generateToken not awaited in login → refreshToken not saved to DB
+  -> logout clearing 'token' cookie → updated to 'accessToken' + 'refreshToken'
+  -> User.findById({ refreshToken }) → User.findOne({ refreshToken })
+  -> Missing user found check after findOne in middleware catch
+  -> process.env.ACCESS_EXPIRY → process.env.ACCESS_TOKEN_EXPIRY
+  -> jwt.sign(decoded.userID) → jwt.sign({ userID: user._id })
+  -> User.accessToken = accessToken → user.accessToken (document not Model)
+  -> Unused decoded variable in catch → removed
+  -> logout not async → has await inside → needs async
+  -> user.save() not awaited in logout → data might not save before response
+
+─────────────────────────────────────
+Refresh token rotation
+─────────────────────────────────────
+- Without rotation: Refresh token is reused every time. Same token works forever until logout.
+- With rotation: Every time refresh token is used — it gets replaced with a brand new one.
+
+
+  Attacker steals your refresh token
+          ↓
+  You're still using your app normally
+          ↓
+  WITHOUT rotation:
+    → Attacker uses refresh token → gets access token
+    → You use same refresh token → also works
+    → Both of you are logged in simultaneously 😱
+    → You never know attacker is there
+
+  WITH rotation:
+    → Attacker uses refresh token first
+    → Old token deleted → new token issued to attacker
+    → You try to use your refresh token
+    → Server: "this token doesn't exist in DB" → 401
+    → YOU get logged out → you notice something wrong ✅
+    → Attacker's new token eventually expires too
+
+# Rotation detects theft automatically. If someone steals and uses your token — you get kicked out — you KNOW something happened.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                          FINAL PROJECT — COMPLETE OVERVIEW
@@ -1126,6 +1153,7 @@ Features Completed:
   ✅ Silent access token refresh via refresh token
   ✅ User Logout (clear both cookies + clear DB)
   ✅ JWT verification middleware (access + refresh flow)
+  ✅ Refresh token rotation
   ✅ Protected routes
   ✅ Forgot password with reset token
   ✅ Password reset with token verification
@@ -1143,7 +1171,6 @@ Features Completed:
 Coming Soon / Future Improvements:
   ⏳ Helmet.js security headers
   ⏳ Redis for persistent rate limiting
-  ⏳ Refresh token rotation * 
   ⏳ Input sanitization (NoSQL injection)
   ⏳ Winston logging
   ⏳ Two-Factor Authentication (2FA)
@@ -1263,8 +1290,16 @@ HTTP:
   23. windowMs: Date.now() * 60 * 15 → should be 15 * 60 * 1000
   24. import { decode } from 'jsonwebtoken' → unnecessary, removed
   25. sendMail vs sendEmail → function name mismatch
-  26-35 → Access + Refresh token upgrade bugs
-
+  26. generateToken not awaited in login → refreshToken not saved to DB
+  27. logout clearing 'token' cookie → updated to 'accessToken' + 'refreshToken'
+  28. User.findById({ refreshToken }) → User.findOne({ refreshToken })
+  29. Missing user found check after findOne in middleware catch
+  30. process.env.ACCESS_EXPIRY → process.env.ACCESS_TOKEN_EXPIRY
+  31. jwt.sign(decoded.userID) → jwt.sign({ userID: user._id })
+  32. User.accessToken = accessToken → user.accessToken (document not Model)
+  33. Unused decoded variable in catch → removed
+  34. logout not async → has await inside → needs async
+  35. user.save() not awaited in logout → data might not save before response
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                          PRODUCTION HABITS DEVELOPED
